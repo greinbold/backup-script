@@ -1,0 +1,131 @@
+#!/bin/sh
+
+###############################################
+#                                             #
+#   S C R I P T   D E   S A U V E G A R D E   #
+#                                             #
+###############################################
+
+##
+#
+# Bases de données MySQL
+#
+########################
+
+# Liste des bases de données MySQL à sauvegarder
+
+mydb="
+owncloud
+tiny_tiny_rss
+"
+
+# Répertoire dans lequel déposer les dump
+
+mydump=/root/mysqldump
+
+# Identifiants MySQL
+
+myuser=root
+mypswd=24r37BNwhVJcyrxuToF9XjApzbt2yiDJ
+
+##
+#
+# Sauvegarde des répertoires et fichiers
+#
+########################################
+
+# Liste des répertoires/fichiers à sauvegarder
+
+items="
+/usr/home/gregory/lab
+/usr/local/etc/apache24
+/usr/local/etc/haproxy.conf
+/usr/local/etc/mysql/my.cnf
+"
+
+# Répertoire dans lequel déposer les archives
+
+dir=/usr/home/gregory/backup/beastie
+
+#####################################################################
+#                                                                   #
+#   N E   R I E N   É D I T E R   S O U S   C E T T E   L I G N E   #
+#                                                                   #
+#####################################################################
+
+# Sortir si l'utilisateur n'est pas root
+
+[ "$(id -u)" != 0 ] && echo 'Script à exécuter en tant que root' && exit 1
+
+##
+#
+# mysqldump
+#
+###########
+
+# Récupérer le chemin vers la commande mysqldump
+
+mysqldump=$(which mysqldump)
+
+# Sortir si la commande mysqldump est introuvable
+
+[ -z $mysqldump ] && echo "mysqldump introuvable" && exit 1
+
+# Créer le répertoire $mydump si nécessaire
+
+[ ! -d $mydump ] && mkdir -p $mydump
+
+# Dump des bases de données MySQL
+
+for i in $mydb; do
+  $mysqldump --set-gtid-purged=OFF \
+  -u $myuser --password=$mypswd \
+  -B $i > $mydump/$i.sql
+done
+
+##
+#
+# Tar
+#
+#####
+
+# Récupérer l'OS
+
+os=$(uname)
+
+# Récupérer le chemin vers la commande tar
+
+tar=$(which tar)
+
+# Si l'OS c'est FreeBSD, vérifier si GNU Tar est installé.
+
+if [ "$os" = "FreeBSD" ]; then
+  tar=$(which gtar) >> /dev/null 2>&1
+  [ $? -ne 0 ] && echo "gtar introuvable" && exit 1
+fi
+
+##
+#
+# Sauvegarde
+#
+############
+
+# Récupérer le nom d'hôte
+
+hostname=$(hostname)
+
+# Récupérer la date actuelle
+
+date=$(date "+%F")
+
+# Définir le nom de l'archive
+
+file="$date-$hostname-backup.tar.gz"
+
+# Créer le répertoire $dir si nécessaire
+
+[ ! -d $dir ] && mkdir -p $dir
+
+# Sauvegarde des répertoires et fichiers
+
+$tar --listed-incremental=$dir/backup.snar -czf $dir/$file $items $mydump
