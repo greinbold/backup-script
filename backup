@@ -1,131 +1,154 @@
 #!/bin/sh
 
-###############################################
-#                                             #
-#   S C R I P T   D E   S A U V E G A R D E   #
-#                                             #
-###############################################
+# Exit if user is not root
+[ "$(id -u)" != 0 ] && echo 'This script must be run as root' && exit 1
 
-##
-#
-# Bases de données MySQL
-#
-########################
-
-# Liste des bases de données MySQL à sauvegarder
-
-mydb="
-owncloud
-tiny_tiny_rss
-"
-
-# Répertoire dans lequel déposer les dump
-
-mydump=/root/mysqldump
-
-# Identifiants MySQL
-
-myuser=root
-mypswd=24r37BNwhVJcyrxuToF9XjApzbt2yiDJ
-
-##
-#
-# Sauvegarde des répertoires et fichiers
-#
-########################################
-
-# Liste des répertoires/fichiers à sauvegarder
-
-items="
-/usr/home/gregory/lab
-/usr/local/etc/apache24
-/usr/local/etc/haproxy.conf
-/usr/local/etc/mysql/my.cnf
-"
-
-# Répertoire dans lequel déposer les archives
-
-dir=/usr/home/gregory/backup/beastie
-
-#####################################################################
-#                                                                   #
-#   N E   R I E N   É D I T E R   S O U S   C E T T E   L I G N E   #
-#                                                                   #
-#####################################################################
-
-# Sortir si l'utilisateur n'est pas root
-
-[ "$(id -u)" != 0 ] && echo 'Script à exécuter en tant que root' && exit 1
-
-##
-#
-# mysqldump
-#
-###########
-
-# Récupérer le chemin vers la commande mysqldump
-
-mysqldump=$(which mysqldump)
-
-# Sortir si la commande mysqldump est introuvable
-
-[ -z $mysqldump ] && echo "mysqldump introuvable" && exit 1
-
-# Créer le répertoire $mydump si nécessaire
-
-[ ! -d $mydump ] && mkdir -p $mydump
-
-# Dump des bases de données MySQL
-
-for i in $mydb; do
-  $mysqldump --set-gtid-purged=OFF \
-  -u $myuser --password=$mypswd \
-  -B $i > $mydump/$i.sql
-done
-
-##
-#
-# Tar
-#
-#####
-
-# Récupérer l'OS
-
+# Get OS
 os=$(uname)
 
-# Récupérer le chemin vers la commande tar
+# Help
+help()
+{
+  cat << FIN
+Usage: backup [-option <argument>] ...
+  -d <directory>    Directory which contains the backups
+  -c <file>         List of users whose the crontab must be backed up
+  -f <file>         List of files and directories to backup
+  -m <file>         List of MySQL databases to backup
+  -l <user>         MySQL user
+  -p <password>     MySQL password
+FIN
+}
 
-tar=$(which tar)
+# Get the arguments
+while getopts d:c:f:m:l:p:uh opt
+do
+  case $opt in
+    d) backup_dir=$OPTARG ;;
+    c) crontab_list=$OPTARG ;;
+    f) files_list=$OPTARG ;;
+    m) mysql_list=$OPTARG ;;
+    l) mysql_user=$OPTARG ;;
+    p) mysql_pswd=$OPTARG ;;
+    u) update=1 ;;
+    h) help ;;
+  esac
+done
 
-# Si l'OS c'est FreeBSD, vérifier si GNU Tar est installé.
+# If we have anything to backup
+if [ ! -z $crontab_list ] || [ ! -z $files_list ] || [ ! -z $mysql_list ]
+then
 
-if [ "$os" = "FreeBSD" ]; then
-  tar=$(which gtar) >> /dev/null 2>&1
-  [ $? -ne 0 ] && echo "gtar introuvable" && exit 1
+  # Check backup directory
+  if [ -z $backup_dir ] || [ ! -d $backup_dir ]
+  then
+    echo "The backup directory $backup_dir seems invalid"
+    exit 1
+  fi
+
+  # Get the tar command path
+  [ "$os" = "FreeBSD" ] && tarcmd=gtar
+  [ "$os" = "Linux" ] && tarcmd=tar
+  tar=$(which $tarcmd) >> /dev/null 2>&1
+  [ -z $tar ] && echo "$tarcmd not found" && exit 1
+
+  # Get the crontab command path
+  crontab=$(which crontab) >> /dev/null 2>&1
+  [ ! -z $crontab_list ] && [ -z $crontab ] && \
+    echo "crontab not found" && exit 1
+
+  # Get the mysqldump command path
+  mysqldump=$(which mysqldump) >> /dev/null 2>&1
+  [ ! -z $mysql_list ] && [ -z $mysqldump ] && \
+    echo "mysqldump not found" && exit 1
+
+  # Backup the crontab
+  if [ ! -z $crontab_list ]
+  then
+
+    # Check if the list exists
+    [ ! -f $crontab_list ] && \
+      echo "The file $crontab_list seems invalid" && exit 1
+
+    # Create the directory that contains the crontab
+    crontab_dir="$backup_dir/crontab"
+    [ ! -d $crontab_dir ] && mkdir $crontab_dir
+
+    # Backup
+    while read user
+    do
+      $crontab -u $user -l > $crontab_dir/$user
+    done < $crontab_list
+  fi
+
+  # Backup MySQL databases
+  if [ ! -z $mysql_list ]
+  then
+
+    # Check if the list exists
+    [ ! -f $mysql_list ] && \
+      echo "The file $mysql_list seems invalid" && exit 1
+
+    # Check if we have MySQL user/password
+    if [ -z $mysql_user ] || [ -z $mysql_pswd ]
+    then
+      echo "MySQL user/password missing or invalid"
+      exit 1
+    fi
+
+    # Create the directory that contains the MySQL dump
+    mysqldump_dir="$backup_dir/mysqldump"
+    [ ! -d $mysqldump_dir ] && mkdir $mysqldump_dir
+
+    # Backup
+    while read database
+    do
+      $mysqldump --set-gtid-purged=OFF \
+      -u $mysql_user --password=$mysql_pswd \
+      -B $database > $mysqldump_dir/$database.sql
+    done < $mysql_list
+  fi
+
+  # Backup of files and directories
+  if [ ! -z $files_list ]
+  then
+
+    # Check if the list exists
+    [ ! -z $files_list ] && [ ! -f $files_list ] && \
+      echo "The file $files_list seems invalid" && exit 1
+  fi
+
+  # Create the directory that contains the archives
+  archives_dir="$backup_dir/archives"
+  [ ! -d $archives_dir ] && mkdir $archives_dir
+
+  # List of items to archive
+  archiving=""
+
+  # Add files and directories
+  if [ ! -z $files_list ]
+  then
+
+    # Get files and folders path
+    while read path
+    do
+      archiving="$archiving $path"
+    done < $files_list
+  fi
+
+  # Add the crontab
+  [ ! -z $crontab_list ] && archiving="$archiving $crontab_dir"
+
+  # Add MySQL dump
+  [ ! -z $mysql_list ] && archiving="$archiving $mysqldump_dir"
+
+  # Archive name
+  archive="$(date '+%F')-$(hostname)-backup.tar.gz"
+
+  # Archiving
+  $tar --listed-incremental=$archives_dir/$(hostname)-backup.snar \
+    -czf $archives_dir/$archive $archiving
+else
+  help
+  exit 1
 fi
-
-##
-#
-# Sauvegarde
-#
-############
-
-# Récupérer le nom d'hôte
-
-hostname=$(hostname)
-
-# Récupérer la date actuelle
-
-date=$(date "+%F")
-
-# Définir le nom de l'archive
-
-file="$date-$hostname-backup.tar.gz"
-
-# Créer le répertoire $dir si nécessaire
-
-[ ! -d $dir ] && mkdir -p $dir
-
-# Sauvegarde des répertoires et fichiers
-
-$tar --listed-incremental=$dir/backup.snar -czf $dir/$file $items $mydump
